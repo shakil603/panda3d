@@ -120,33 +120,42 @@ jobs:
 
       - name: Build thirdparty packages
         if: steps.cache-thirdparty.outputs.cache-hit != 'true'
+        env:
+          TP_ABI: ${{ matrix.android-abi }}
+          TP_ARCH: ${{ matrix.android-arch }}
+          TP_API: ${{ env.ANDROID_API }}
+          TP_REV: ${{ env.THIRDPARTY_REV }}
         run: |
           set -o pipefail
-          TPDIR=thirdparty-${{ matrix.android-abi }}
+          set -x
+          REPO="${THIRDPARTY_REPO:-https://github.com/rdb/panda3d-thirdparty.git}"
+          REV="${TP_REV:-935c80380ca171e08587c570e9dad678d29db3c8}"
+          echo "repo=$REPO rev=$REV abi=$TP_ABI arch=$TP_ARCH api=$TP_API ndk=$ANDROID_NDK_ROOT"
+          TPDIR=thirdparty-$TP_ABI
           LOG=$TPDIR/build.log
           mkdir -p "$TPDIR"   # so tee has a directory to write the log into
-          git clone --depth=1 ${{ env.THIRDPARTY_REPO }} "$TPDIR" 2>&1 | tee -a "$LOG"
-          (cd "$TPDIR" && git fetch --depth=1 origin ${{ env.THIRDPARTY_REV }} && git checkout ${{ env.THIRDPARTY_REV }}) 2>&1 | tee -a "$LOG"
+          git clone --depth=1 "$REPO" "$TPDIR" 2>&1 | tee -a "$LOG"
+          (cd "$TPDIR" && git fetch --depth=1 origin "$REV" && git checkout "$REV") 2>&1 | tee -a "$LOG"
           cmake -B "$TPDIR/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
-            -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.android-abi }} \
-            -DCMAKE_ANDROID_ARCH=${{ matrix.android-arch }} \
-            -DCMAKE_SYSTEM_VERSION=${{ env.ANDROID_API }} \
-            -DANDROID_ABI=${{ matrix.android-abi }} \
-            -DANDROID_PLATFORM=android-${{ env.ANDROID_API }} \
+            -DCMAKE_ANDROID_ARCH_ABI="$TP_ABI" \
+            -DCMAKE_ANDROID_ARCH="$TP_ARCH" \
+            -DCMAKE_SYSTEM_VERSION="$TP_API" \
+            -DANDROID_ABI="$TP_ABI" \
+            -DANDROID_PLATFORM=android-"$TP_API" \
             -DBUILD_FCOLLADA=OFF \
             -DBUILD_OPENSSL=OFF \
             -DBUILD_VRPN=OFF \
             -DBUILD_ARTOOLKIT=OFF 2>&1 | tee "$LOG"
           # Retry once: ExternalProject downloads can fail transiently.
-          do_build() { cmake --build thirdparty-${{ matrix.android-abi }}/build --config Release -j4; }
+          do_build() { cmake --build "$TPDIR/build" --config Release -j4; }
           if ! do_build 2>&1 | tee -a "$LOG"; then
             echo "thirdparty build failed; retrying once after 10s..."
             sleep 10
             do_build 2>&1 | tee -a "$LOG"
           fi
-          rm -rf thirdparty-${{ matrix.android-abi }}/build
+          rm -rf "$TPDIR/build"
 
       - name: Publish thirdparty build log (on failure)
         if: failure()
@@ -154,6 +163,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIAG_SHA: ${{ github.sha }}
           DIAG_REPO: ${{ github.repository }}
+          DIAG_PR: ${{ github.event.pull_request.number }}
         run: |
           python3 android/publish_log.py "thirdparty-${{ matrix.android-abi }}/build.log" "thirdparty-log" || true
 
@@ -193,6 +203,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIAG_SHA: ${{ github.sha }}
           DIAG_REPO: ${{ github.repository }}
+          DIAG_PR: ${{ github.event.pull_request.number }}
         run: |
           python3 android/publish_log.py makepanda.log "makepanda-log" || true
 
