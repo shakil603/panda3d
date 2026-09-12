@@ -79,11 +79,11 @@ int main(int argc, char *argv[]) {
   } else {
     // Not a file on the real filesystem: try Panda's virtual filesystem,
     // which includes the APK's assets directory (mounted at /android_asset).
-    std::istream *in =
-        VirtualFileSystem::get_global_ptr()->open_read_file(Filename(script));
+    std::istream *in = VirtualFileSystem::get_global_ptr()->open_read_file(
+        Filename(script), true);
     if (in != nullptr) {
       std::ostringstream oss;
-      oss << *in;
+      oss << in->rdbuf();
       VirtualFileSystem::close_read_file(in);
 
       int res = PyRun_SimpleString(oss.str().c_str());
