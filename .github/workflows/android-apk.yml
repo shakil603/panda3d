@@ -121,6 +121,8 @@ jobs:
       - name: Build thirdparty packages
         if: steps.cache-thirdparty.outputs.cache-hit != 'true'
         run: |
+          set -o pipefail
+          LOG=thirdparty-${{ matrix.android-abi }}/build.log
           git clone --depth=1 ${{ env.THIRDPARTY_REPO }} thirdparty-${{ matrix.android-abi }}
           (cd thirdparty-${{ matrix.android-abi }} && git fetch --depth=1 origin ${{ env.THIRDPARTY_REV }} && git checkout ${{ env.THIRDPARTY_REV }})
           cmake -B thirdparty-${{ matrix.android-abi }}/build \
@@ -134,9 +136,24 @@ jobs:
             -DBUILD_FCOLLADA=OFF \
             -DBUILD_OPENSSL=OFF \
             -DBUILD_VRPN=OFF \
-            -DBUILD_ARTOOLKIT=OFF
-          cmake --build thirdparty-${{ matrix.android-abi }}/build --config Release -j4
+            -DBUILD_ARTOOLKIT=OFF 2>&1 | tee "$LOG"
+          # Retry once: ExternalProject downloads can fail transiently.
+          do_build() { cmake --build thirdparty-${{ matrix.android-abi }}/build --config Release -j4; }
+          if ! do_build 2>&1 | tee -a "$LOG"; then
+            echo "thirdparty build failed; retrying once after 10s..."
+            sleep 10
+            do_build 2>&1 | tee -a "$LOG"
+          fi
           rm -rf thirdparty-${{ matrix.android-abi }}/build
+
+      - name: Publish thirdparty build log (on failure)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIAG_SHA: ${{ github.sha }}
+          DIAG_REPO: ${{ github.repository }}
+        run: |
+          python3 android/publish_log.py "thirdparty-${{ matrix.android-abi }}/build.log" "thirdparty-log" || true
 
       - name: Save thirdparty build cache
         if: steps.cache-thirdparty.outputs.cache-hit != 'true'
@@ -155,6 +172,7 @@ jobs:
       # ---- Build Panda3D and the APK ---------------------------------------
       - name: Build Panda3D for Android + assemble APK
         run: |
+          set -o pipefail
           python makepanda/makepanda.py \
             --git-commit=${GITHUB_SHA} \
             --target android-${{ env.ANDROID_API }} \
@@ -165,7 +183,16 @@ jobs:
             --everything \
             --no-openssl --no-tinydisplay --no-pandatool \
             --installer \
-            --threads=4
+            --threads=4 2>&1 | tee makepanda.log
+
+      - name: Publish makepanda log (on failure)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIAG_SHA: ${{ github.sha }}
+          DIAG_REPO: ${{ github.repository }}
+        run: |
+          python3 android/publish_log.py makepanda.log "makepanda-log" || true
 
       - name: Prepare APK artifact
         run: |
