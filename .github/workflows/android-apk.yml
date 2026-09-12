@@ -127,15 +127,17 @@ jobs:
           TP_REV: ${{ env.THIRDPARTY_REV }}
         run: |
           set -o pipefail
+          TPDIR=thirdparty-$TP_ABI
+          mkdir -p "$TPDIR"
+          LOG=$TPDIR/build.log
+          # Mirror ALL output (incl. xtrace) into the log, keep the console copy.
+          exec > >(tee -a "$LOG") 2>&1
           set -x
           REPO="${THIRDPARTY_REPO:-https://github.com/rdb/panda3d-thirdparty.git}"
           REV="${TP_REV:-935c80380ca171e08587c570e9dad678d29db3c8}"
           echo "repo=$REPO rev=$REV abi=$TP_ABI arch=$TP_ARCH api=$TP_API ndk=$ANDROID_NDK_ROOT"
-          TPDIR=thirdparty-$TP_ABI
-          LOG=$TPDIR/build.log
-          mkdir -p "$TPDIR"   # so tee has a directory to write the log into
-          git clone --depth=1 "$REPO" "$TPDIR" 2>&1 | tee -a "$LOG"
-          (cd "$TPDIR" && git fetch --depth=1 origin "$REV" && git checkout "$REV") 2>&1 | tee -a "$LOG"
+          git clone --depth=1 "$REPO" "$TPDIR"
+          (cd "$TPDIR" && git fetch --depth=1 origin "$REV" && git checkout "$REV")
           cmake -B "$TPDIR/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
@@ -147,13 +149,13 @@ jobs:
             -DBUILD_FCOLLADA=OFF \
             -DBUILD_OPENSSL=OFF \
             -DBUILD_VRPN=OFF \
-            -DBUILD_ARTOOLKIT=OFF 2>&1 | tee "$LOG"
+            -DBUILD_ARTOOLKIT=OFF
           # Retry once: ExternalProject downloads can fail transiently.
           do_build() { cmake --build "$TPDIR/build" --config Release -j4; }
-          if ! do_build 2>&1 | tee -a "$LOG"; then
+          if ! do_build; then
             echo "thirdparty build failed; retrying once after 10s..."
             sleep 10
-            do_build 2>&1 | tee -a "$LOG"
+            do_build
           fi
           rm -rf "$TPDIR/build"
 
@@ -165,7 +167,24 @@ jobs:
           DIAG_REPO: ${{ github.repository }}
           DIAG_PR: ${{ github.event.pull_request.number }}
         run: |
-          python3 android/publish_log.py "thirdparty-${{ matrix.android-abi }}/build.log" "thirdparty-log" || true
+          LOGFILE="thirdparty-${{ matrix.android-abi }}/build.log"
+          python3 android/publish_log.py "$LOGFILE" "thirdparty-log" >diag.out 2>&1 || true
+          {
+            echo "### Thirdparty build failed — log tail"
+            echo
+            if [ -s "$LOGFILE" ]; then
+              echo '```'
+              tail -n 120 "$LOGFILE"
+              echo '```'
+            else
+              echo "(build.log is missing or empty — the step died before it started logging)"
+            fi
+            echo
+            echo "diagnostic publish result:"
+            echo '```'
+            cat diag.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save thirdparty build cache
         if: steps.cache-thirdparty.outputs.cache-hit != 'true'
@@ -205,7 +224,23 @@ jobs:
           DIAG_REPO: ${{ github.repository }}
           DIAG_PR: ${{ github.event.pull_request.number }}
         run: |
-          python3 android/publish_log.py makepanda.log "makepanda-log" || true
+          python3 android/publish_log.py makepanda.log "makepanda-log" >diag.out 2>&1 || true
+          {
+            echo "### makepanda failed — log tail"
+            echo
+            if [ -s makepanda.log ]; then
+              echo '```'
+              tail -n 120 makepanda.log
+              echo '```'
+            else
+              echo "(makepanda.log is missing or empty)"
+            fi
+            echo
+            echo "diagnostic publish result:"
+            echo '```'
+            cat diag.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Prepare APK artifact
         run: |
