@@ -25,7 +25,7 @@ env:
   NDK_VERSION: "29.0.14206865"          # NDK r29
   BUILD_TOOLS_VERSION: "34.0.0"
   TARGET_PYTHON_VERSION: "3.13.9"       # CPython shipped inside the APK
-  HOST_PYTHON_VERSION: "3.13"           # must match the major.minor of target
+  HOST_PYTHON_VERSION: "3.13.9"         # must match the target version exactly
   THIRDPARTY_REPO: "https://github.com/rdb/panda3d-thirdparty.git"
   THIRDPARTY_REV: "935c80380ca171e08587c570e9dad678d29db3c8"
 
@@ -70,6 +70,9 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
           echo "$ANDROID_SDK_ROOT/build-tools/${{ env.BUILD_TOOLS_VERSION }}" >> "$GITHUB_PATH"
+          # NDK toolchain bin (provides llvm-readelf, needed by makepackage.py;
+          # appended last so it only supplements, never shadows, system tools)
+          echo "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
 
       - name: Set up host Python
         uses: actions/setup-python@v5
@@ -130,14 +133,17 @@ jobs:
           TPDIR=thirdparty-$TP_ABI
           mkdir -p "$TPDIR"
           LOG=$TPDIR/build.log
-          # Mirror ALL output (incl. xtrace) into the log, keep the console copy.
-          exec > >(tee -a "$LOG") 2>&1
+          : > "$LOG"
+          # Record xtrace in the log, and on any failure record the exact
+          # failing line (synchronous — no race with background processes).
+          trap 'echo "" >> "$LOG"; echo ">>> FAILED at line $LINENO: $BASH_COMMAND" >> "$LOG"; echo ">>> FAILED at line $LINENO: $BASH_COMMAND"' ERR
+          exec 2>> "$LOG"   # stderr (and xtrace below) goes to the log
           set -x
           REPO="${THIRDPARTY_REPO:-https://github.com/rdb/panda3d-thirdparty.git}"
           REV="${TP_REV:-935c80380ca171e08587c570e9dad678d29db3c8}"
           echo "repo=$REPO rev=$REV abi=$TP_ABI arch=$TP_ARCH api=$TP_API ndk=$ANDROID_NDK_ROOT"
-          git clone --depth=1 "$REPO" "$TPDIR"
-          (cd "$TPDIR" && git fetch --depth=1 origin "$REV" && git checkout "$REV")
+          git clone --depth=1 "$REPO" "$TPDIR" 2>&1 | tee -a "$LOG"
+          (cd "$TPDIR" && git fetch --depth=1 origin "$REV" && git checkout "$REV") 2>&1 | tee -a "$LOG"
           cmake -B "$TPDIR/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
@@ -193,6 +199,13 @@ jobs:
           path: ./thirdparty-${{ matrix.android-abi }}
           key: ${{ steps.cache-thirdparty.outputs.cache-primary-key }}
 
+      # Tools needed by makepackage.py when assembling the APK
+      # (llvm-readelf comes from the NDK toolchain, see PATH above).
+      - name: Install APK packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patchelf
+
       # makepanda's APK assembler looks for the cross-built CPython under
       # <thirdparty>/android-libs-<arch>/python/.
       - name: Link CPython into thirdparty
@@ -204,6 +217,12 @@ jobs:
       - name: Build Panda3D for Android + assemble APK
         run: |
           set -o pipefail
+          # makepackage.py copies libraries into the APK by following each
+          # library's NEEDED entries on LD_LIBRARY_PATH — point it at the
+          # thirdparty package lib dirs and the cross-built Python.
+          TP="thirdparty-${{ matrix.android-abi }}/android-libs-${{ matrix.android-arch }}"
+          export LD_LIBRARY_PATH="$(find "$TP" -maxdepth 2 -type d \( -name lib -o -name lib64 \) | tr '\n' ':')$HOME/python-prefix-${{ matrix.android-abi }}/lib:$LD_LIBRARY_PATH"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
           python makepanda/makepanda.py \
             --git-commit=${GITHUB_SHA} \
             --target android-${{ env.ANDROID_API }} \
