@@ -18,13 +18,17 @@ def main():
         print("usage: publish_log.py <log-file> <check-run-name>")
         return 2
     log_file, name = sys.argv[1], sys.argv[2]
+
     if not os.path.isfile(log_file):
-        return 0
-
-    with open(log_file, errors="replace") as f:
-        tail = f.readlines()[-150:]
-
-    body = "Build failed. Log tail:\n\n```\n" + "".join(tail) + "```"
+        body = ("No log file found at `%s` — the step failed before it "
+                "started writing the log (check earlier steps, e.g. the "
+                "SDK/NDK setup)." % log_file)
+        summary = "Log file was not created"
+    else:
+        with open(log_file, errors="replace") as f:
+            tail = f.readlines()[-150:]
+        body = "Log tail:\n\n```\n" + "".join(tail) + "```"
+        summary = "See output for the last 150 log lines"
     payload = {
         "name": name,
         "head_sha": os.environ["DIAG_SHA"],
@@ -33,7 +37,7 @@ def main():
         "completed_at": "2026-01-01T00:00:00Z",
         "output": {
             "title": name + " (tail)",
-            "summary": "See output for the last 150 log lines",
+            "summary": summary,
             "text": body,
         },
     }
@@ -42,6 +46,7 @@ def main():
          "repos/%s/check-runs" % os.environ["DIAG_REPO"],
          "--input", "-"],
         input=json.dumps(payload),
+        text=True,
         check=True,
     )
     return 0

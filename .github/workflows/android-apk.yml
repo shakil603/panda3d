@@ -122,10 +122,12 @@ jobs:
         if: steps.cache-thirdparty.outputs.cache-hit != 'true'
         run: |
           set -o pipefail
-          LOG=thirdparty-${{ matrix.android-abi }}/build.log
-          git clone --depth=1 ${{ env.THIRDPARTY_REPO }} thirdparty-${{ matrix.android-abi }}
-          (cd thirdparty-${{ matrix.android-abi }} && git fetch --depth=1 origin ${{ env.THIRDPARTY_REV }} && git checkout ${{ env.THIRDPARTY_REV }})
-          cmake -B thirdparty-${{ matrix.android-abi }}/build \
+          TPDIR=thirdparty-${{ matrix.android-abi }}
+          LOG=$TPDIR/build.log
+          mkdir -p "$TPDIR"   # so tee has a directory to write the log into
+          git clone --depth=1 ${{ env.THIRDPARTY_REPO }} "$TPDIR" 2>&1 | tee -a "$LOG"
+          (cd "$TPDIR" && git fetch --depth=1 origin ${{ env.THIRDPARTY_REV }} && git checkout ${{ env.THIRDPARTY_REV }}) 2>&1 | tee -a "$LOG"
+          cmake -B "$TPDIR/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
             -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.android-abi }} \
