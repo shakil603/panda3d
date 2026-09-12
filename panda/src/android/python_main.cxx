@@ -14,6 +14,8 @@
 #include "dtoolbase.h"
 #include "config_android.h"
 #include "executionEnvironment.h"
+#include "virtualFileSystem.h"
+#include "filename.h"
 
 #undef _POSIX_C_SOURCE
 #undef _XOPEN_SOURCE
@@ -22,13 +24,18 @@
 
 #include <dlfcn.h>
 
+#include <sstream>
+#include <string>
+
+// The demo application bundled into the APK's assets.  Run when the activity
+// is launched without a file argument (eg. from the app launcher).
+static const char *const DEFAULT_APP_SCRIPT = "/android_asset/default_app.py";
+
 /**
  * The main entry point for the Python activity.  Called by android_main.
  */
 int main(int argc, char *argv[]) {
-  if (argc <= 1) {
-    return 1;
-  }
+  const char *script = (argc > 1) ? argv[1] : DEFAULT_APP_SCRIPT;
 
   // Help out Python by telling it which encoding to use
   Py_FileSystemDefaultEncoding = "utf-8";
@@ -60,17 +67,35 @@ int main(int argc, char *argv[]) {
   Py_DECREF(py_native_dir);
 
   int sts = 1;
-  FILE *fp = fopen(argv[1], "r");
+  FILE *fp = fopen(script, "r");
   if (fp != nullptr) {
-    int res = PyRun_AnyFile(fp, argv[1]);
+    int res = PyRun_AnyFile(fp, script);
     if (res > 0) {
       sts = 0;
     } else {
-      android_cat.error() << "Error running " << argv[1] << "\n";
+      android_cat.error() << "Error running " << script << "\n";
       PyErr_Print();
     }
   } else {
-    android_cat.error() << "Unable to open " << argv[1] << "\n";
+    // Not a file on the real filesystem: try Panda's virtual filesystem,
+    // which includes the APK's assets directory (mounted at /android_asset).
+    std::istream *in =
+        VirtualFileSystem::get_global_ptr()->open_read_file(Filename(script));
+    if (in != nullptr) {
+      std::ostringstream oss;
+      oss << *in;
+      VirtualFileSystem::close_read_file(in);
+
+      int res = PyRun_SimpleString(oss.str().c_str());
+      if (res >= 0) {
+        sts = 0;
+      } else {
+        android_cat.error() << "Error running " << script << "\n";
+        PyErr_Print();
+      }
+    } else {
+      android_cat.error() << "Unable to open " << script << "\n";
+    }
   }
 
   Py_Finalize();

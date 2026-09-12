@@ -1,9 +1,16 @@
 # makepanda directories
 /built*/
 /thirdparty/
+/thirdparty-*/
 /targetroot/
 /dstroot/
 /sdks/
+
+# Android APK build (see android/)
+/dist/
+/apkroot/
+/android/build-env.sh
+/android/*.log
 
 # Core dumps and traces
 core

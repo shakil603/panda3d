@@ -971,6 +971,12 @@ def MakeInstallerAndroid(version, **kwargs):
     oscmd("cp -R %s apkroot/assets/models" % (os.path.join(outputdir, "models")))
     oscmd("cp -R %s apkroot/assets/etc" % (os.path.join(outputdir, "etc")))
 
+    # Also bundle the default Python application, which is run when the
+    # Python activity is launched without a file argument.
+    default_app_src = os.path.join("android", "default_app.py")
+    if os.path.isfile(default_app_src):
+        shutil.copy(default_app_src, os.path.join("apkroot", "assets", "default_app.py"))
+
     # Make an empty res folder.  It's needed for the apk to be installable, apparently.
     oscmd("mkdir apkroot/res")
 

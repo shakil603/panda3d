@@ -1,0 +1,257 @@
+# Builds the Panda3D Android APK automatically.
+#
+# * Every push to the default branch / pull request: builds one APK per ABI
+#   (arm64-v8a, armeabi-v7a), merges them into a universal APK and uploads
+#   everything as workflow artifacts.
+# * On tags (v*): also attaches all APKs to the GitHub release.
+# * Can also be started manually from the "Actions" tab (workflow_dispatch).
+#
+name: Android APK
+
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: android-apk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ANDROID_API: "21"
+  NDK_VERSION: "29.0.14206865"          # NDK r29
+  BUILD_TOOLS_VERSION: "34.0.0"
+  TARGET_PYTHON_VERSION: "3.13.9"       # CPython shipped inside the APK
+  HOST_PYTHON_VERSION: "3.13"           # must match the major.minor of target
+  THIRDPARTY_REPO: "https://github.com/rdb/panda3d-thirdparty.git"
+  THIRDPARTY_REV: "935c80380ca171e08587c570e9dad678d29db3c8"
+
+jobs:
+  # ------------------------------------------------------------------
+  apk:
+    name: "APK · ${{ matrix.android-abi }}"
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - android-abi: arm64-v8a      # 64-bit ARM (most phones since 2017)
+            android-arch: arm64        # CMake CMAKE_ANDROID_ARCH
+            makepanda-arch: arm64      # makepanda --arch
+            cpython-host: aarch64-linux-android
+          - android-abi: armeabi-v7a    # 32-bit ARM (older phones)
+            android-arch: arm
+            makepanda-arch: armv7a
+            cpython-host: arm-linux-androideabi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (javac, keytool)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK (platform, build-tools, NDK)
+        uses: android-actions/setup-android@v4
+        with:
+          packages: >-
+            tools
+            platform-tools
+            platforms;android-${{ env.ANDROID_API }}
+            build-tools;${{ env.BUILD_TOOLS_VERSION }}
+            ndk;${{ env.NDK_VERSION }}
+
+      - name: Set Android environment variables
+        run: |
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/build-tools/${{ env.BUILD_TOOLS_VERSION }}" >> "$GITHUB_PATH"
+
+      - name: Set up host Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.HOST_PYTHON_VERSION }}
+
+      # ---- Cross-compiled CPython (cached) --------------------------------
+      - name: Restore CPython build cache
+        id: cache-python
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/python-prefix-${{ matrix.android-abi }}
+          key: panda3d-apk-python-${{ env.TARGET_PYTHON_VERSION }}-${{ matrix.android-abi }}-ndk${{ env.NDK_VERSION }}
+
+      - name: Build CPython for Android
+        if: steps.cache-python.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://www.python.org/ftp/python/${{ env.TARGET_PYTHON_VERSION }}/Python-${{ env.TARGET_PYTHON_VERSION }}.tar.xz
+          tar -xJf Python-${{ env.TARGET_PYTHON_VERSION }}.tar.xz
+          # android.py in 3.13.9 only knows aarch64/x86_64; make it accept
+          # the triple we want (no-op for arm64), and pin the NDK version.
+          sed -i.bak "s/aarch64-linux-android/${{ matrix.cpython-host }}/" Python-${{ env.TARGET_PYTHON_VERSION }}/Android/android.py
+          sed -i.bak "s/ndk_version=[0-9.]\{1,\}/ndk_version=${{ env.NDK_VERSION }}/" Python-${{ env.TARGET_PYTHON_VERSION }}/Android/android-env.sh
+          (cd Python-${{ env.TARGET_PYTHON_VERSION }}/Android && python3 android.py build ${{ matrix.cpython-host }})
+          cp -R Python-${{ env.TARGET_PYTHON_VERSION }}/cross-build/${{ matrix.cpython-host }}/prefix ~/python-prefix-${{ matrix.android-abi }}
+          rm -rf Python-${{ env.TARGET_PYTHON_VERSION }}
+
+      - name: Save CPython build cache
+        if: steps.cache-python.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/python-prefix-${{ matrix.android-abi }}
+          key: ${{ steps.cache-python.outputs.cache-primary-key }}
+
+      # ---- Thirdparty support libraries (cached) ---------------------------
+      - name: Restore thirdparty build cache
+        id: cache-thirdparty
+        uses: actions/cache/restore@v4
+        with:
+          path: ./thirdparty-${{ matrix.android-abi }}
+          key: panda3d-apk-thirdparty-${{ env.THIRDPARTY_REV }}-${{ matrix.android-abi }}-ndk${{ env.NDK_VERSION }}
+
+      - name: Install build dependencies
+        if: steps.cache-thirdparty.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq yasm
+
+      - name: Build thirdparty packages
+        if: steps.cache-thirdparty.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 ${{ env.THIRDPARTY_REPO }} thirdparty-${{ matrix.android-abi }}
+          (cd thirdparty-${{ matrix.android-abi }} && git fetch --depth=1 origin ${{ env.THIRDPARTY_REV }} && git checkout ${{ env.THIRDPARTY_REV }})
+          cmake -B thirdparty-${{ matrix.android-abi }}/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.android-abi }} \
+            -DCMAKE_ANDROID_ARCH=${{ matrix.android-arch }} \
+            -DCMAKE_SYSTEM_VERSION=${{ env.ANDROID_API }} \
+            -DANDROID_ABI=${{ matrix.android-abi }} \
+            -DANDROID_PLATFORM=android-${{ env.ANDROID_API }} \
+            -DBUILD_FCOLLADA=OFF \
+            -DBUILD_OPENSSL=OFF \
+            -DBUILD_VRPN=OFF \
+            -DBUILD_ARTOOLKIT=OFF
+          cmake --build thirdparty-${{ matrix.android-abi }}/build --config Release -j4
+          rm -rf thirdparty-${{ matrix.android-abi }}/build
+
+      - name: Save thirdparty build cache
+        if: steps.cache-thirdparty.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ./thirdparty-${{ matrix.android-abi }}
+          key: ${{ steps.cache-thirdparty.outputs.cache-primary-key }}
+
+      # makepanda's APK assembler looks for the cross-built CPython under
+      # <thirdparty>/android-libs-<arch>/python/.
+      - name: Link CPython into thirdparty
+        run: |
+          mkdir -p thirdparty-${{ matrix.android-abi }}/android-libs-${{ matrix.android-arch }}
+          ln -sfn ~/python-prefix-${{ matrix.android-abi }} thirdparty-${{ matrix.android-abi }}/android-libs-${{ matrix.android-arch }}/python
+
+      # ---- Build Panda3D and the APK ---------------------------------------
+      - name: Build Panda3D for Android + assemble APK
+        run: |
+          python makepanda/makepanda.py \
+            --git-commit=${GITHUB_SHA} \
+            --target android-${{ env.ANDROID_API }} \
+            --arch ${{ matrix.makepanda-arch }} \
+            --python-incdir=~/python-prefix-${{ matrix.android-abi }}/include \
+            --python-libdir=~/python-prefix-${{ matrix.android-abi }}/lib \
+            --outputdir=built-android-${{ matrix.android-abi }} \
+            --everything \
+            --no-openssl --no-tinydisplay --no-pandatool \
+            --installer \
+            --threads=4
+
+      - name: Prepare APK artifact
+        run: |
+          mkdir -p dist
+          VERSION=$(sed -n 's/^version\s*=\s*//p' setup.cfg | tr -d '[:space:]')
+          mv panda3d.apk "dist/panda3d-${VERSION}-${{ matrix.android-abi }}.apk"
+          ls -lh dist/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: panda3d-apk-${{ matrix.android-abi }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  universal:
+    name: "APK · universal (arm64 + armv7)"
+    needs: apk
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (keytool)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android build-tools
+        uses: android-actions/setup-android@v4
+        with:
+          packages: >-
+            tools
+            build-tools;${{ env.BUILD_TOOLS_VERSION }}
+
+      - name: Download per-ABI APKs
+        uses: actions/download-artifact@v4
+        with:
+          path: apks
+
+      - name: Merge into a universal APK
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/build-tools/${{ env.BUILD_TOOLS_VERSION }}:$PATH"
+          VERSION=$(sed -n 's/^version\s*=\s*//p' setup.cfg | tr -d '[:space:]')
+          ARM64=$(ls apks/panda3d-apk-arm64-v8a/*.apk | head -1)
+          ARMV7=$(ls apks/panda3d-apk-armeabi-v7a/*.apk | head -1)
+          mkdir -p dist work
+          cp "$ARM64" "dist/panda3d-${VERSION}-universal.apk"
+          (cd work && unzip -q -o "$ARMV7" "lib/armeabi-v7a/*")
+          # Inject the 32-bit libraries (stored uncompressed, as .so must be).
+          (cd work && zip -q -r -X -0 "../dist/panda3d-${VERSION}-universal.apk" lib/armeabi-v7a)
+          rm -rf work
+          # Re-align and re-sign (modifying the APK invalidated both).
+          zipalign -f -p 4 "dist/panda3d-${VERSION}-universal.apk" dist/aligned.apk
+          keytool -genkey -noprompt -dname CN=Panda3D,O=Panda3D,C=US \
+            -keystore debug.ks -storepass android -alias androiddebugkey \
+            -keypass android -keyalg RSA -keysize 2048 -validity 1000
+          apksigner sign --ks debug.ks --ks-pass pass:android \
+            --min-sdk-version ${{ env.ANDROID_API }} \
+            --out "dist/panda3d-${VERSION}-universal.apk" dist/aligned.apk
+          rm -f dist/aligned.apk
+          ls -lh dist/
+
+      - name: Upload universal APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: panda3d-apk-universal
+          path: dist/*.apk
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  release:
+    name: "Release (tags only)"
+    needs: [apk, universal]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all APKs
+        uses: actions/download-artifact@v4
+        with:
+          path: apks
+
+      - name: Attach APKs to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apks/**/*.apk
+          fail_on_unmatched_files: true
+          generate_release_notes: true
