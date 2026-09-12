@@ -132,31 +132,43 @@ jobs:
           set -o pipefail
           TPDIR=thirdparty-$TP_ABI
           mkdir -p "$TPDIR"
-          LOG=$TPDIR/build.log
+          # NOTE: the log lives OUTSIDE $TPDIR — the tarball fallback does
+          # `rm -rf $TPDIR`, which would delete (and invalidate open fds on)
+          # a log inside it.
+          LOG="thirdparty-$TP_ABI-build.log"
           : > "$LOG"
           # Record xtrace in the log, and on any failure record the exact
           # failing line (synchronous — no race with background processes).
-          trap 'echo "" >> "$LOG"; echo ">>> FAILED at line $LINENO: $BASH_COMMAND" >> "$LOG"; echo ">>> FAILED at line $LINENO: $BASH_COMMAND"' ERR
+          trap 'echo "" >> "$LOG"; echo ">>> FAILED at line $LINENO: $BASH_COMMAND" >> "$LOG"' ERR
           exec 2>> "$LOG"   # stderr (and xtrace below) goes to the log
           set -x
           REPO="${THIRDPARTY_REPO:-https://github.com/rdb/panda3d-thirdparty.git}"
           REV="${TP_REV:-935c80380ca171e08587c570e9dad678d29db3c8}"
-          echo "repo=$REPO rev=$REV abi=$TP_ABI arch=$TP_ARCH api=$TP_API ndk=$ANDROID_NDK_ROOT"
-          # NOTE: clone anonymously (-c credential.helper=). The runner's
-          # preconfigured github.com credential helper uses the job's
-          # GITHUB_TOKEN, which is read-only for fork PRs and does not cover
-          # this other repo — using it makes git fail with exit code 128.
-          if git -c credential.helper= clone --depth=1 "$REPO" "$TPDIR" 2>&1 | tee -a "$LOG"; then
-            (cd "$TPDIR" && git -c credential.helper= fetch --depth=1 origin "$REV" && git checkout "$REV") 2>&1 | tee -a "$LOG"
+          echo "repo=$REPO rev=$REV abi=$TP_ABI arch=$TP_ARCH api=$TP_API ndk=$ANDROID_NDK_ROOT" >> "$LOG"
+          # Clone anonymously: the runner's preconfigured github.com
+          # credentials use the job token, which is read-only for fork PRs.
+          # If git fails for any reason, fall back to the codeload tarball
+          # (same exact revision).
+          if git -c credential.helper= clone --depth=1 "$REPO" "$TPDIR" >>"$LOG" 2>&1; then
+            if (cd "$TPDIR" && git -c credential.helper= fetch --depth=1 origin "$REV" >>"$LOG" 2>&1 && git checkout "$REV" >>"$LOG" 2>&1); then
+              echo "git: cloned and checked out $REV" >> "$LOG"
+            else
+              echo "!!! git fetch/checkout failed — falling back to codeload tarball" >> "$LOG"
+              rm -rf "$TPDIR"
+              mkdir -p "$TPDIR"
+              curl -fsSL "https://codeload.github.com/rdb/panda3d-thirdparty/tar.gz/$REV" -o /tmp/thirdparty.tgz >>"$LOG" 2>&1
+              tar -xzf /tmp/thirdparty.tgz --strip-components=1 -C "$TPDIR" >>"$LOG" 2>&1
+              rm -f /tmp/thirdparty.tgz
+            fi
           else
-            echo "git clone failed — falling back to codeload tarball of $REV"
+            echo "!!! git clone failed — falling back to codeload tarball" >> "$LOG"
             rm -rf "$TPDIR"
             mkdir -p "$TPDIR"
-            curl -fsSL "https://codeload.github.com/rdb/panda3d-thirdparty/tar.gz/$REV" -o /tmp/thirdparty.tgz
-            tar -xzf /tmp/thirdparty.tgz --strip-components=1 -C "$TPDIR"
+            curl -fsSL "https://codeload.github.com/rdb/panda3d-thirdparty/tar.gz/$REV" -o /tmp/thirdparty.tgz >>"$LOG" 2>&1
+            tar -xzf /tmp/thirdparty.tgz --strip-components=1 -C "$TPDIR" >>"$LOG" 2>&1
             rm -f /tmp/thirdparty.tgz
-            ls "$TPDIR" | head -5
           fi
+          ls "$TPDIR" | head -5 >> "$LOG"
           cmake -B "$TPDIR/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
@@ -168,15 +180,20 @@ jobs:
             -DBUILD_FCOLLADA=OFF \
             -DBUILD_OPENSSL=OFF \
             -DBUILD_VRPN=OFF \
-            -DBUILD_ARTOOLKIT=OFF
+            -DBUILD_ARTOOLKIT=OFF >>"$LOG" 2>&1 || { cat "$LOG"; exit 1; }
           # Retry once: ExternalProject downloads can fail transiently.
-          do_build() { cmake --build "$TPDIR/build" --config Release -j4; }
+          do_build() { cmake --build "$TPDIR/build" --config Release -j4 >>"$LOG" 2>&1; }
           if ! do_build; then
-            echo "thirdparty build failed; retrying once after 10s..."
+            echo "thirdparty build failed; retrying once after 10s..." >> "$LOG"
             sleep 10
-            do_build
+            if ! do_build; then
+              echo ">>> thirdparty build failed twice" >> "$LOG"
+              cat "$LOG"
+              exit 1
+            fi
           fi
           rm -rf "$TPDIR/build"
+          echo "thirdparty build OK" >> "$LOG"
 
       - name: Publish thirdparty build log (on failure)
         if: failure()
@@ -186,7 +203,7 @@ jobs:
           DIAG_REPO: ${{ github.repository }}
           DIAG_PR: ${{ github.event.pull_request.number }}
         run: |
-          LOGFILE="thirdparty-${{ matrix.android-abi }}/build.log"
+          LOGFILE="thirdparty-${{ matrix.android-abi }}-build.log"
           # Reliable channel: workflow-command annotation (works with the
           # read-only fork-PR token; readable via the annotations API).
           python3 android/publish_log.py --annotate "$LOGFILE" "thirdparty log tail"
