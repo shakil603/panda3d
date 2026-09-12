@@ -9,9 +9,11 @@
 # an app that can send a "view" intent with a .py file) and "Panda Python"
 # will run it.
 #
+import math
+
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import LColor, sin
+from panda3d.core import LColor
 
 
 class DefaultApp(ShowBase):
@@ -63,7 +65,7 @@ class DefaultApp(ShowBase):
     def animate(self, task):
         # Spin around the vertical axis and wobble a little.
         self.model.setH(task.time * 45)
-        self.model.setP(8 * sin(task.time))
+        self.model.setP(8 * math.sin(task.time))
         return task.cont
 
 
