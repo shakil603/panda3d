@@ -24,7 +24,7 @@ import sys
 import tempfile
 
 
-def tail_of(log_file, lines=150):
+def tail_of(log_file, lines=400):
     if not os.path.isfile(log_file):
         return None
     with open(log_file, errors="replace") as f:
