@@ -19,16 +19,58 @@ Env (for the first mode): DIAG_REPO (owner/repo), DIAG_PR (PR number),
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
+# Patterns that usually indicate the real failure in a build log.
+_ERR_RE = re.compile(
+    r"(?i)\berror\b|error:|fatal|undefined reference|cannot (read|find|open)|"
+    r"no such file|not found|failed|failure|make.*\[\d+,\d+\]\d+: |"
+    r"Traceback|Exception|Killed|out of memory|ld\.lld|linker"
+)
 
-def tail_of(log_file, lines=400):
+
+def _read_lines(log_file):
     if not os.path.isfile(log_file):
         return None
     with open(log_file, errors="replace") as f:
-        return "".join(f.readlines()[-lines:])
+        return f.readlines()
+
+
+def tail_of(log_file, lines=400):
+    data = _read_lines(log_file)
+    if data is None:
+        return None
+    return "".join(data[-lines:])
+
+
+def diagnostic_of(log_file, budget=40000):
+    """Build a compact diagnostic: every error-looking line plus the tail.
+
+    Kept under ~budget raw chars so the base64'd workflow-command annotation
+    stays under GitHub's 65535-byte limit.
+    """
+    data = _read_lines(log_file)
+    if data is None:
+        return "NO LOG FILE at %s" % log_file
+    errs = [ln.rstrip("\n") for ln in data if _ERR_RE.search(ln)]
+    # De-dupe while preserving order.
+    seen = set()
+    errs = [e for e in errs if not (e in seen or seen.add(e))]
+    tail = [ln.rstrip("\n") for ln in data[-60:]]
+    parts = []
+    if errs:
+        parts.append("===== %d error line(s) =====" % len(errs))
+        parts.extend(errs)
+    parts.append("===== last %d line(s) =====" % len(tail))
+    parts.extend(tail)
+    text = "\n".join(parts)
+    if len(text) > budget:
+        # Keep the tail (most recent state), drop the oldest error lines.
+        text = "…(truncated)…\n" + text[-(budget - 20):]
+    return text
 
 
 def post_pr_comment(repo, pr, title, body):
@@ -80,12 +122,7 @@ def main():
             print("usage: publish_log.py --annotate <log-file> <title>")
             return 2
         log_file, title = sys.argv[2], sys.argv[3]
-        tail = tail_of(log_file)
-        if tail is None:
-            payload = ("NO LOG FILE at %s — the step failed before it "
-                       "started writing the log." % log_file)
-        else:
-            payload = tail
+        payload = diagnostic_of(log_file)
         # Workflow-command annotations are single-line; carry the log as
         # base64 so it can be decoded from the API.
         b64 = base64.b64encode(payload.encode("utf-8", "replace")).decode()

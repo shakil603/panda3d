@@ -253,6 +253,15 @@ jobs:
       - name: Build Panda3D for Android + assemble APK
         run: |
           set -o pipefail
+          # NDK r29's sysroot only has usr/lib/arm-linux-androideabi, but
+          # makepanda looks up libc++_shared.so under the armv7a-linux-
+          # androideabi triple for --arch armv7a. Provide the expected path.
+          SYSROOT_LIBS="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+          if [ ! -e "$SYSROOT_LIBS/armv7a-linux-androideabi" ]; then
+            mkdir -p "$SYSROOT_LIBS/armv7a-linux-androideabi"
+            cp -n "$SYSROOT_LIBS/arm-linux-androideabi/libc++_shared.so" \
+                  "$SYSROOT_LIBS/armv7a-linux-androideabi/" 2>/dev/null || true
+          fi
           # makepackage.py copies libraries into the APK by following each
           # library's NEEDED entries on LD_LIBRARY_PATH — point it at the
           # thirdparty package lib dirs and the cross-built Python.
@@ -269,7 +278,7 @@ jobs:
             --everything \
             --no-openssl --no-tinydisplay --no-pandatool \
             --installer \
-            --threads=4 2>&1 | tee makepanda.log
+            --threads=2 2>&1 | tee makepanda.log
 
       - name: Publish makepanda log (on failure)
         if: failure()
