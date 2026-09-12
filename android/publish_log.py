@@ -4,15 +4,31 @@
 Used by .github/workflows/android-apk.yml when a build step fails, so the
 error output can be inspected even when raw job logs are unavailable.
 
-Usage:  publish_log.py <log-file> <check-run-name>
-Env:    DIAG_REPO (owner/repo), DIAG_PR (pull request number, optional),
-        DIAG_SHA (for the check-run fallback), GH_TOKEN (for gh api)
+Modes:
+  publish_log.py <log-file> <name>
+      Best-effort: PR comment (pull_request events) or check run (others).
+
+  publish_log.py --annotate <log-file> <title>
+      Print a GitHub Actions workflow command (::error::) carrying the log
+      tail as base64.  The runner turns it into a check-run annotation that
+      is readable via the API even with a read-only fork-PR token.
+
+Env (for the first mode): DIAG_REPO (owner/repo), DIAG_PR (PR number),
+      DIAG_SHA, GH_TOKEN.
 """
+import base64
 import json
 import os
 import subprocess
 import sys
 import tempfile
+
+
+def tail_of(log_file, lines=150):
+    if not os.path.isfile(log_file):
+        return None
+    with open(log_file, errors="replace") as f:
+        return "".join(f.readlines()[-lines:])
 
 
 def post_pr_comment(repo, pr, title, body):
@@ -59,21 +75,34 @@ def post_check_run(repo, sha, name, body):
 
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "--annotate":
+        if len(sys.argv) != 4:
+            print("usage: publish_log.py --annotate <log-file> <title>")
+            return 2
+        log_file, title = sys.argv[2], sys.argv[3]
+        tail = tail_of(log_file)
+        if tail is None:
+            payload = ("NO LOG FILE at %s — the step failed before it "
+                       "started writing the log." % log_file)
+        else:
+            payload = tail
+        # Workflow-command annotations are single-line; carry the log as
+        # base64 so it can be decoded from the API.
+        b64 = base64.b64encode(payload.encode("utf-8", "replace")).decode()
+        print("::error title=%s (log tail, base64)::p3d-log-b64:%s" % (title, b64))
+        return 0
+
     if len(sys.argv) != 3:
-        print("usage: publish_log.py <log-file> <name>")
+        print("usage: publish_log.py <log-file> <name> | --annotate <log-file> <title>")
         return 2
     log_file, name = sys.argv[1], sys.argv[2]
     repo = os.environ.get("DIAG_REPO", "")
     pr = os.environ.get("DIAG_PR", "").strip()
     sha = os.environ.get("DIAG_SHA", "").strip()
 
-    if not os.path.isfile(log_file):
-        body = ("No log file found at `%s` — the step failed before it "
-                "started writing the log." % log_file)
-    else:
-        with open(log_file, errors="replace") as f:
-            tail = f.readlines()[-150:]
-        body = "```bash\n" + "".join(tail) + "```"
+    tail = tail_of(log_file)
+    body = ("(No log file found at `%s` — the step failed before it started "
+            "writing the log.)" % log_file) if tail is None else "```bash\n" + tail + "```"
 
     # Prefer a PR comment (always works for pull_request events); fall
     # back to a check run for pushes/tags.

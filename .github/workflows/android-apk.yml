@@ -187,6 +187,10 @@ jobs:
           DIAG_PR: ${{ github.event.pull_request.number }}
         run: |
           LOGFILE="thirdparty-${{ matrix.android-abi }}/build.log"
+          # Reliable channel: workflow-command annotation (works with the
+          # read-only fork-PR token; readable via the annotations API).
+          python3 android/publish_log.py --annotate "$LOGFILE" "thirdparty log tail"
+          # Best-effort channels:
           python3 android/publish_log.py "$LOGFILE" "thirdparty-log" >diag.out 2>&1 || true
           {
             echo "### Thirdparty build failed — log tail"
@@ -256,6 +260,7 @@ jobs:
           DIAG_REPO: ${{ github.repository }}
           DIAG_PR: ${{ github.event.pull_request.number }}
         run: |
+          python3 android/publish_log.py --annotate makepanda.log "makepanda log tail"
           python3 android/publish_log.py makepanda.log "makepanda-log" >diag.out 2>&1 || true
           {
             echo "### makepanda failed — log tail"
