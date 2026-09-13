@@ -369,6 +369,9 @@ jobs:
             find apks -type f | head -50
             exit 1
           fi
+          # Absolute paths — unzip runs inside work/ below.
+          ARM64="$GITHUB_WORKSPACE/$ARM64"
+          ARMV7="$GITHUB_WORKSPACE/$ARMV7"
           echo "ARM64=$ARM64 ARMV7=$ARMV7"
           mkdir -p dist work
           cp "$ARM64" "dist/panda3d-${VERSION}-universal.apk"
