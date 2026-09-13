@@ -354,10 +354,22 @@ jobs:
 
       - name: Merge into a universal APK
         run: |
+          set -o pipefail
+          LOG=merge.log
+          : > "$LOG"
+          trap 'echo ">>> FAILED at line $LINENO: $BASH_COMMAND" >> "$LOG"' ERR
+          exec 2>> "$LOG"   # all tool errors go to the log
           export PATH="$ANDROID_SDK_ROOT/build-tools/${{ env.BUILD_TOOLS_VERSION }}:$PATH"
           VERSION=$(sed -n 's/^version\s*=\s*//p' setup.cfg | tr -d '[:space:]')
-          ARM64=$(ls apks/panda3d-apk-arm64-v8a/*.apk | head -1)
-          ARMV7=$(ls apks/panda3d-apk-armeabi-v7a/*.apk | head -1)
+          # download-artifact layout can vary; search instead of assuming.
+          ARM64=$(find apks -name "panda3d-*arm64-v8a.apk" | head -1)
+          ARMV7=$(find apks -name "panda3d-*armeabi-v7a.apk" | head -1)
+          if [ -z "$ARM64" ] || [ -z "$ARMV7" ]; then
+            echo "::error title=universal-merge::missing per-ABI APKs; downloaded tree:"
+            find apks -type f | head -50
+            exit 1
+          fi
+          echo "ARM64=$ARM64 ARMV7=$ARMV7"
           mkdir -p dist work
           cp "$ARM64" "dist/panda3d-${VERSION}-universal.apk"
           (cd work && unzip -q -o "$ARMV7" "lib/armeabi-v7a/*")
@@ -374,6 +386,11 @@ jobs:
             --out "dist/panda3d-${VERSION}-universal.apk" dist/aligned.apk
           rm -f dist/aligned.apk
           ls -lh dist/
+
+      - name: Publish universal merge log (on failure)
+        if: failure()
+        run: |
+          python3 android/publish_log.py --annotate merge.log "universal merge log tail" || true
 
       - name: Upload universal APK
         uses: actions/upload-artifact@v4
