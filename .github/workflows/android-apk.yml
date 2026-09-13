@@ -251,6 +251,11 @@ jobs:
 
       # ---- Build Panda3D and the APK ---------------------------------------
       - name: Build Panda3D for Android + assemble APK
+        env:
+          # Point makepanda at this ABI's thirdparty directory (built above);
+          # without it makepanda looks in ./thirdparty and silently builds
+          # Panda3D without any of the thirdparty packages.
+          MAKEPANDA_THIRDPARTY: thirdparty-${{ matrix.android-abi }}
         run: |
           set -o pipefail
           # NDK r29's sysroot only has usr/lib/arm-linux-androideabi, but
