@@ -28,7 +28,41 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+#include <android/log.h>
+#include <execinfo.h>
+#include <signal.h>
+#include <cstdlib>
+
 using std::string;
+
+namespace {
+
+/**
+ * Native crash handler: before the process dies, write a full backtrace to
+ * logcat under the tag PANDA3D_CRASH (and mirror it to the system crash
+ * logger), so that on-device crashes can be diagnosed without a debugger.
+ * Use a logcat viewer app (or adb logcat) to capture these lines.
+ */
+void panda3d_crash_handler(int sig) {
+  void *bt[48];
+  int n = backtrace(bt, 48);
+  __android_log_print(ANDROID_LOG_FATAL, "PANDA3D_CRASH",
+                      "Panda3D native crash: signal %d, %d frames", sig, n);
+  char **syms = backtrace_symbols(bt, n);
+  if (syms != nullptr) {
+    for (int i = 0; i < n; ++i) {
+      __android_log_print(ANDROID_LOG_FATAL, "PANDA3D_CRASH",
+                          "  #%02d %s", i, syms[i]);
+    }
+    free(syms);
+  }
+  // Restore the default handler and re-raise so the normal crash handling
+  // (tombstone, "app keeps stopping" dialog) still happens.
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+}  // namespace
 
 // struct android_app* panda_android_app = NULL;
 
@@ -43,6 +77,13 @@ extern int main(int argc, const char **argv);
  */
 void android_main(struct android_app* app) {
   panda_android_app = app;
+
+  // Install our crash handler before anything else, so even an early crash
+  // is captured with a backtrace in logcat.
+  signal(SIGSEGV, panda3d_crash_handler);
+  signal(SIGABRT, panda3d_crash_handler);
+  signal(SIGBUS, panda3d_crash_handler);
+  signal(SIGFPE, panda3d_crash_handler);
 
   // Attach the app thread to the Java VM.
   JNIEnv *env;
