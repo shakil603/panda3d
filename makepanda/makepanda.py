@@ -4968,6 +4968,14 @@ if GetTarget() == 'android':
     TargetAdd('org/panda3d/android/PythonActivity.class', opts=OPTS, input='PythonActivity.java')
     TargetAdd('org/panda3d/android/PythonActivity$ActivityResultListener.class', opts=OPTS+['DEPENDENCYONLY'], input='PythonActivity.java')
 
+    # The Panda3D Studio UI (a single app: home screen, lists, editor).
+    OPTS_STUDIO=['DIR:panda/src/android/studio']
+    TargetAdd('org/panda3d/studio/StudioMainActivity.class', opts=OPTS_STUDIO, input='StudioMainActivity.java')
+    TargetAdd('org/panda3d/studio/StudioListActivity.class', opts=OPTS_STUDIO, input='StudioListActivity.java')
+    TargetAdd('org/panda3d/studio/StudioListActivity$DialogHandler.class', opts=OPTS_STUDIO+['DEPENDENCYONLY'], input='StudioListActivity.java')
+    TargetAdd('org/panda3d/studio/StudioListActivity$DeleteHandler.class', opts=OPTS_STUDIO+['DEPENDENCYONLY'], input='StudioListActivity.java')
+    TargetAdd('org/panda3d/studio/StudioEditorActivity.class', opts=OPTS_STUDIO, input='StudioEditorActivity.java')
+
     TargetAdd('classes.dex', input='org/panda3d/android/NativeIStream.class')
     TargetAdd('classes.dex', input='org/panda3d/android/NativeOStream.class')
     TargetAdd('classes.dex', input='org/panda3d/android/PandaActivity.class')
@@ -4975,6 +4983,11 @@ if GetTarget() == 'android':
     TargetAdd('classes.dex', input='org/panda3d/android/PandaActivity$2.class')
     TargetAdd('classes.dex', input='org/panda3d/android/PythonActivity.class')
     TargetAdd('classes.dex', input='org/panda3d/android/PythonActivity$ActivityResultListener.class')
+    TargetAdd('classes.dex', input='org/panda3d/studio/StudioMainActivity.class')
+    TargetAdd('classes.dex', input='org/panda3d/studio/StudioListActivity.class')
+    TargetAdd('classes.dex', input='org/panda3d/studio/StudioListActivity$DialogHandler.class')
+    TargetAdd('classes.dex', input='org/panda3d/studio/StudioListActivity$DeleteHandler.class')
+    TargetAdd('classes.dex', input='org/panda3d/studio/StudioEditorActivity.class')
 
     TargetAdd('p3android_composite1.obj', opts=OPTS, input='p3android_composite1.cxx')
     TargetAdd('libp3android.dll', input='p3android_composite1.obj')

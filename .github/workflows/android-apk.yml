@@ -273,6 +273,8 @@ jobs:
           TP="thirdparty-${{ matrix.android-abi }}/android-libs-${{ matrix.android-arch }}"
           export LD_LIBRARY_PATH="$(find "$TP" -maxdepth 2 -type d \( -name lib -o -name lib64 \) | tr '\n' ':')$HOME/python-prefix-${{ matrix.android-abi }}/lib:$LD_LIBRARY_PATH"
           echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+          # Generate the Studio app icon (pure Python, no dependencies).
+          python3 android/studio/make_icon.py
           python makepanda/makepanda.py \
             --git-commit=${GITHUB_SHA} \
             --target android-${{ env.ANDROID_API }} \
@@ -316,7 +318,7 @@ jobs:
         run: |
           mkdir -p dist
           VERSION=$(sed -n 's/^version\s*=\s*//p' setup.cfg | tr -d '[:space:]')
-          mv panda3d.apk "dist/panda3d-${VERSION}-${{ matrix.android-abi }}.apk"
+          mv panda3d.apk "dist/panda3d-studio-${VERSION}-${{ matrix.android-abi }}.apk"
           ls -lh dist/
 
       - name: Upload APK
@@ -374,19 +376,19 @@ jobs:
           ARMV7="$GITHUB_WORKSPACE/$ARMV7"
           echo "ARM64=$ARM64 ARMV7=$ARMV7"
           mkdir -p dist work
-          cp "$ARM64" "dist/panda3d-${VERSION}-universal.apk"
+          cp "$ARM64" "dist/panda3d-studio-${VERSION}-universal.apk"
           (cd work && unzip -q -o "$ARMV7" "lib/armeabi-v7a/*")
           # Inject the 32-bit libraries (stored uncompressed, as .so must be).
-          (cd work && zip -q -r -X -0 "../dist/panda3d-${VERSION}-universal.apk" lib/armeabi-v7a)
+          (cd work && zip -q -r -X -0 "../dist/panda3d-studio-${VERSION}-universal.apk" lib/armeabi-v7a)
           rm -rf work
           # Re-align and re-sign (modifying the APK invalidated both).
-          zipalign -f -p 4 "dist/panda3d-${VERSION}-universal.apk" dist/aligned.apk
+          zipalign -f -p 4 "dist/panda3d-studio-${VERSION}-universal.apk" dist/aligned.apk
           keytool -genkey -noprompt -dname CN=Panda3D,O=Panda3D,C=US \
             -keystore debug.ks -storepass android -alias androiddebugkey \
             -keypass android -keyalg RSA -keysize 2048 -validity 1000
           apksigner sign --ks debug.ks --ks-pass pass:android \
             --min-sdk-version ${{ env.ANDROID_API }} \
-            --out "dist/panda3d-${VERSION}-universal.apk" dist/aligned.apk
+            --out "dist/panda3d-studio-${VERSION}-universal.apk" dist/aligned.apk
           rm -f dist/aligned.apk
           ls -lh dist/
 

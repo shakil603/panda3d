@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Panda3D Studio — a single app for making 3D games on Android.
+
+  The launcher icon opens StudioMainActivity.  The Panda viewer and the
+  Python runner are still registered so that .egg/.bam/.py files can be
+  opened from a file manager, but they are not separate app icons.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+        package="org.panda3d.sdk"
+        android:versionCode="2"
+        android:versionName="1.11.0">
+
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30" />
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+
+    <application android:label="Panda3D Studio"
+                 android:icon="@drawable/ic_launcher"
+                 android:hasCode="true" android:debuggable="true">
+
+        <!-- The one and only app icon. -->
+        <activity android:name="org.panda3d.studio.StudioMainActivity"
+                android:label="Panda3D Studio"
+                android:theme="@android:style/Theme.Material"
+                android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name="org.panda3d.studio.StudioListActivity"
+                android:theme="@android:style/Theme.Material" />
+
+        <activity android:name="org.panda3d.studio.StudioEditorActivity"
+                android:theme="@android:style/Theme.Material"
+                android:windowSoftInputMode="stateVisible|adjustResize" />
+
+        <!-- The 3D model viewer (no launcher icon; opened from Studio or
+             from a file manager via the intent filters below). -->
+        <activity android:name="org.panda3d.android.PandaActivity"
+                android:label="Panda Viewer" android:theme="@android:style/Theme.NoTitleBar"
+                android:configChanges="orientation|keyboardHidden"
+                android:launchMode="singleTop">
+
+            <meta-data android:name="android.app.lib_name"
+                       android:value="pview" />
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="model/x-egg" />
+                <data android:mimeType="model/x-compressed-egg" />
+                <data android:mimeType="model/x-bam" />
+                <data android:mimeType="model/x-compressed-bam" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" android:scheme="file" />
+                <data android:pathPattern=".*\\.egg" />
+                <data android:pathPattern=".*\\.egg.pz" />
+                <data android:pathPattern=".*\\.egg.gz" />
+                <data android:pathPattern=".*\\.bam" />
+                <data android:pathPattern=".*\\.bam.pz" />
+                <data android:pathPattern=".*\\.bam.gz" />
+            </intent-filter>
+        </activity>
+
+        <!-- The Python game runner (no launcher icon; opened from Studio
+             or from a file manager via the intent filters below). -->
+        <activity android:name="org.panda3d.android.PythonActivity"
+                android:label="Panda Python" android:theme="@android:style/Theme.NoTitleBar"
+                android:configChanges="orientation|keyboardHidden"
+                android:launchMode="singleTop">
+
+            <meta-data android:name="android.app.lib_name"
+                       android:value="ppython" />
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/x-python" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" android:scheme="file" />
+                <data android:pathPattern=".*\\.py" />
+                <data android:pathPattern=".*\\.pyw" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
