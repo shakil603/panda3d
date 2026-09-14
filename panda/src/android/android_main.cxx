@@ -29,70 +29,28 @@
 #include <arpa/inet.h>
 
 #include <android/log.h>
-#include <dlfcn.h>
-#include <link.h>
 #include <signal.h>
-#include <unwind.h>
-#include <cstdio>
 
 using std::string;
 
 namespace {
 
 /**
- * Native crash handler: before the process dies, write a full backtrace to
- * logcat under the tag PANDA3D_CRASH, so that on-device crashes can be
- * diagnosed without a debugger.  Use a logcat viewer app (or adb logcat)
- * to capture these lines.
+ * Native crash marker: log a distinctive line before the process dies,
+ * so that on-device crashes are easy to find in logcat (use a logcat
+ * viewer app on the phone, or adb logcat, and search for PANDA3D_CRASH).
  *
- * (Bionic's <execinfo.h> does not provide backtrace(), so use the
- * _Unwind_Backtrace + dladdr combination instead.)
+ * The actual backtrace is written automatically by the system crash
+ * handler right after, under the tag DEBUG (the "F DEBUG" lines with
+ * the per-frame library and offset), so both sets of lines together
+ * tell the whole story.
  */
-struct BacktraceContext {
-  void *frames[48];
-  int count;
-};
-
-_Unwind_Reason_Code collect_backtrace_frame(unw_frame_info_t *fi, void *arg) {
-  BacktraceContext *ctx = static_cast<BacktraceContext *>(arg);
-  if (ctx->count < 48) {
-    ctx->frames[ctx->count] = (void *)fi->ip;
-    ++ctx->count;
-  }
-  return _URC_NO_REASON;
-}
-
 void panda3d_crash_handler(int sig) {
-  BacktraceContext ctx;
-  ctx.frames[0] = nullptr;
-  ctx.count = 0;
-  _Unwind_Backtrace(collect_backtrace_frame, &ctx);
-
   __android_log_print(ANDROID_LOG_FATAL, "PANDA3D_CRASH",
-                      "Panda3D native crash: signal %d, %d frames", sig, ctx.count);
-  for (int i = 0; i < ctx.count; ++i) {
-    char desc[256];
-    const char *sym = nullptr;
-    Dl_info info;
-    if (dladdr(ctx.frames[i], &info)) {
-      if (info.dli_sname != nullptr) {
-        sym = info.dli_sname;
-      } else if (info.dli_fname != nullptr) {
-        snprintf(desc, sizeof(desc), "%s (+0x%lx)",
-                 info.dli_fname,
-                 (unsigned long)((char *)ctx.frames[i] - (char *)info.dli_fbase));
-        sym = desc;
-      }
-    }
-    if (sym == nullptr) {
-      snprintf(desc, sizeof(desc), "???");
-      sym = desc;
-    }
-    __android_log_print(ANDROID_LOG_FATAL, "PANDA3D_CRASH",
-                        "  #%02d %p %s", i, ctx.frames[i], sym);
-  }
+                      "Panda3D native crash: signal %d "
+                      "(backtrace follows in the DEBUG lines)", sig);
   // Restore the default handler and re-raise so the normal crash handling
-  // (tombstone, "app keeps stopping" dialog) still happens.
+  // (tombstone backtrace, "app keeps stopping" dialog) still happens.
   signal(sig, SIG_DFL);
   raise(sig);
 }
