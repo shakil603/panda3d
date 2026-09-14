@@ -4969,12 +4969,18 @@ if GetTarget() == 'android':
     TargetAdd('org/panda3d/android/PythonActivity$ActivityResultListener.class', opts=OPTS+['DEPENDENCYONLY'], input='PythonActivity.java')
 
     # The Panda3D Studio UI (a single app: home screen, lists, editor).
+    # The dep= entries order the javac steps: each file references the
+    # classes compiled by the previous step.
     OPTS_STUDIO=['DIR:panda/src/android/studio']
-    TargetAdd('org/panda3d/studio/StudioMainActivity.class', opts=OPTS_STUDIO, input='StudioMainActivity.java')
-    TargetAdd('org/panda3d/studio/StudioListActivity.class', opts=OPTS_STUDIO, input='StudioListActivity.java')
-    TargetAdd('org/panda3d/studio/StudioListActivity$DialogHandler.class', opts=OPTS_STUDIO+['DEPENDENCYONLY'], input='StudioListActivity.java')
-    TargetAdd('org/panda3d/studio/StudioListActivity$DeleteHandler.class', opts=OPTS_STUDIO+['DEPENDENCYONLY'], input='StudioListActivity.java')
     TargetAdd('org/panda3d/studio/StudioEditorActivity.class', opts=OPTS_STUDIO, input='StudioEditorActivity.java')
+    TargetAdd('org/panda3d/studio/StudioListActivity.class', opts=OPTS_STUDIO, input='StudioListActivity.java',
+              dep=['org/panda3d/studio/StudioEditorActivity.class'])
+    TargetAdd('org/panda3d/studio/StudioListActivity$DialogHandler.class', opts=OPTS_STUDIO+['DEPENDENCYONLY'], input='StudioListActivity.java',
+              dep=['org/panda3d/studio/StudioEditorActivity.class'])
+    TargetAdd('org/panda3d/studio/StudioListActivity$DeleteHandler.class', opts=OPTS_STUDIO+['DEPENDENCYONLY'], input='StudioListActivity.java',
+              dep=['org/panda3d/studio/StudioEditorActivity.class'])
+    TargetAdd('org/panda3d/studio/StudioMainActivity.class', opts=OPTS_STUDIO, input='StudioMainActivity.java',
+              dep=['org/panda3d/studio/StudioListActivity.class'])
 
     TargetAdd('classes.dex', input='org/panda3d/android/NativeIStream.class')
     TargetAdd('classes.dex', input='org/panda3d/android/NativeOStream.class')
